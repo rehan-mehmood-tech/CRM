@@ -74,23 +74,27 @@ npm install
 ### 2. Create a Firebase project
 
 1. Open [console.firebase.google.com](https://console.firebase.google.com) and create a project.
-2. Add a **Web app** and copy its config values.
-3. Copy the environment template and fill it in:
-
-```bash
-cp .env.local.example .env.local
-```
+2. Add a **Web app**, then open **Project settings → General → Your apps → SDK setup and
+   configuration → Config**.
+3. Open [.env](.env) and replace each `REPLACE_ME` with the matching value:
 
 ```ini
 NEXT_PUBLIC_FIREBASE_API_KEY=...
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
 NEXT_PUBLIC_FIREBASE_APP_ID=...
 ```
 
-Until these are set, the app renders a setup notice instead of the sign-in screens.
+Until these are filled in, the app renders a setup notice instead of the sign-in screens.
+
+**`.env` is committed to git on purpose.** Firebase web config values are not secrets — they
+ship inside the client bundle of every Firebase web app, so anyone can read them from the
+browser. Your data is protected by [firestore.rules](firestore.rules) and the **Authorized
+domains** list in Firebase Authentication, not by hiding these values. Real secrets (service
+account keys, admin SDK credentials, third-party API secrets) belong in `.env.local`, which
+stays gitignored and overrides `.env` locally.
 
 ### 3. Enable Authentication
 

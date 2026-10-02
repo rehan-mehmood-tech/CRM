@@ -30,8 +30,13 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
+# .env holds the Firebase web config, which is public by design (it ships in the
+# client bundle), so it is committed. Anything *.local may hold real secrets and
+# stays out of git.
 .env*
+!.env
+!.env.local.example
 
 # vercel
 .vercel

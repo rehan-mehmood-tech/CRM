@@ -12,10 +12,14 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+/** A value counts as missing when it is blank or still the committed placeholder. */
+function isSet(value: string | undefined): boolean {
+  return Boolean(value && !value.includes("REPLACE_ME"));
+}
+
 /** True when every required key is present in the environment. */
-export const isFirebaseConfigured = Boolean(
-  firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId,
-);
+export const isFirebaseConfigured =
+  isSet(firebaseConfig.apiKey) && isSet(firebaseConfig.projectId) && isSet(firebaseConfig.appId);
 
 let app: FirebaseApp | null = null;
 
