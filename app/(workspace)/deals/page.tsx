@@ -89,8 +89,10 @@ export default function DealsPage() {
     setDragging(null);
     if (!deal || !orgId || !actor || !pipeline) return;
     if (deal.stageId === stageId && deal.status === "open") return;
+    // Dropped cards go to the top of the target column.
+    const topOrder = Math.max(0, ...scoped.filter((item) => item.stageId === stageId).map((item) => item.order));
     try {
-      await moveDealToStage(orgId, actor, deal, pipeline, stageId, Date.now());
+      await moveDealToStage(orgId, actor, deal, pipeline, stageId, topOrder + 1);
     } catch (err) {
       toast.error(errorMessage(err));
     }
