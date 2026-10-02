@@ -8,7 +8,7 @@ import {
   Building2,
   CalendarClock,
   Columns3,
-  Linkedin,
+  Link2,
   ListChecks,
   Mail,
   MapPin,
@@ -180,7 +180,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 </Row>
               ) : null}
               {contact.linkedin ? (
-                <Row icon={<Linkedin className="size-4" />} label="LinkedIn">
+                <Row icon={<Link2 className="size-4" />} label="LinkedIn">
                   <span className="break-all">{contact.linkedin}</span>
                 </Row>
               ) : null}
