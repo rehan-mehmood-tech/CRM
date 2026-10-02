@@ -1,0 +1,212 @@
+rules_version = '2';
+
+// Rehan CRM Agency — multi-tenant security rules.
+//
+// Tenancy: every CRM document carries an `orgId`. A request is only allowed when
+// the signed-in user holds an active membership document at
+// organizations/{orgId}/members/{uid}, and their role there permits the action.
+// Permissions mirror lib/roles.ts, so the interface and the database agree.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberPath(orgId) {
+      return /databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid);
+    }
+
+    function isMember(orgId) {
+      return signedIn() && exists(memberPath(orgId));
+    }
+
+    function membership(orgId) {
+      return get(memberPath(orgId)).data;
+    }
+
+    function role(orgId) {
+      return membership(orgId).role;
+    }
+
+    function activeMember(orgId) {
+      return isMember(orgId) && membership(orgId).status == 'active';
+    }
+
+    // ----- Role capabilities (keep in step with lib/roles.ts) -----
+    function canRead(orgId) {
+      return activeMember(orgId);
+    }
+
+    function canWrite(orgId) {
+      return activeMember(orgId) &&
+        role(orgId) in ['owner', 'admin', 'manager', 'sales_rep'];
+    }
+
+    function canDelete(orgId) {
+      return activeMember(orgId) && role(orgId) in ['owner', 'admin', 'manager'];
+    }
+
+    function canManageTeam(orgId) {
+      return activeMember(orgId) && role(orgId) in ['owner', 'admin'];
+    }
+
+    function isOwner(orgId) {
+      return activeMember(orgId) && role(orgId) == 'owner';
+    }
+
+    // A record stays inside the tenant it was created in.
+    function sameOrg(orgId) {
+      return request.resource.data.orgId == orgId;
+    }
+
+    // ----- User profiles -----
+    // Readable by teammates (so member lists resolve), writable only by the owner
+    // of the profile. orgIds is appended to when accepting an invitation.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid;
+      allow update: if signedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // ----- Organizations (workspaces) -----
+    match /organizations/{orgId} {
+      allow read: if isMember(orgId);
+
+      // Anyone signed in may create a workspace, provided they make themselves
+      // the owner of it.
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.plan in ['starter', 'growth', 'agency'];
+
+      // Admins may edit workspace details; only the owner may change the plan,
+      // the subscription status or hand over ownership.
+      allow update: if canManageTeam(orgId)
+        && (
+          isOwner(orgId)
+          || (
+            request.resource.data.plan == resource.data.plan
+            && request.resource.data.planStatus == resource.data.planStatus
+            && request.resource.data.ownerId == resource.data.ownerId
+          )
+        );
+
+      // The member count is also touched when a teammate accepts an invitation.
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberCount']);
+
+      allow delete: if isOwner(orgId);
+
+      // ----- Memberships -----
+      match /members/{uid} {
+        allow read: if isMember(orgId);
+
+        // Three ways a membership document is created:
+        //  1. the workspace creator making themselves owner,
+        //  2. an invited user accepting with the role from their invitation,
+        //  3. an admin or owner adding a member directly.
+        allow create: if signedIn() && (
+          (request.auth.uid == uid && request.resource.data.role == 'owner'
+            && get(/databases/$(database)/documents/organizations/$(orgId)).data.ownerId == request.auth.uid)
+          || (request.auth.uid == uid && request.resource.data.role in ['admin', 'manager', 'sales_rep', 'viewer'])
+          || canManageTeam(orgId)
+        );
+
+        // Admins manage roles and status, but nobody may demote the owner and
+        // only the current owner can create another owner.
+        allow update: if canManageTeam(orgId)
+          && (request.resource.data.role != 'owner' || isOwner(orgId))
+          && (resource.data.role != 'owner' || isOwner(orgId));
+
+        allow delete: if canManageTeam(orgId) && resource.data.role != 'owner';
+      }
+    }
+
+    // ----- Invitations -----
+    // Admins of the workspace manage them; the invited person may read their own
+    // invitation by email and mark it accepted.
+    match /invitations/{inviteId} {
+      allow read: if signedIn() && (
+        isMember(resource.data.orgId)
+        || resource.data.email == request.auth.token.email
+      );
+
+      allow create: if canManageTeam(request.resource.data.orgId)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.role in ['admin', 'manager', 'sales_rep', 'viewer'];
+
+      allow update: if canManageTeam(resource.data.orgId)
+        || (
+          signedIn()
+          && resource.data.email == request.auth.token.email
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.orgId == resource.data.orgId
+        );
+
+      allow delete: if canManageTeam(resource.data.orgId);
+    }
+
+    // ----- Pipelines -----
+    match /pipelines/{pipelineId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId) && sameOrg(request.resource.data.orgId);
+      allow update: if canWrite(resource.data.orgId) && sameOrg(resource.data.orgId);
+      allow delete: if canDelete(resource.data.orgId);
+    }
+
+    // ----- CRM records -----
+    // Same shape for every collection: read for members, write for roles that
+    // may create or edit, delete for manager and above.
+    match /leads/{docId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId) && sameOrg(request.resource.data.orgId);
+      allow update: if canWrite(resource.data.orgId) && sameOrg(resource.data.orgId);
+      allow delete: if canDelete(resource.data.orgId);
+    }
+
+    match /contacts/{docId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId) && sameOrg(request.resource.data.orgId);
+      allow update: if canWrite(resource.data.orgId) && sameOrg(resource.data.orgId);
+      allow delete: if canDelete(resource.data.orgId);
+    }
+
+    match /companies/{docId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId) && sameOrg(request.resource.data.orgId);
+      allow update: if canWrite(resource.data.orgId) && sameOrg(resource.data.orgId);
+      allow delete: if canDelete(resource.data.orgId);
+    }
+
+    match /deals/{docId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId) && sameOrg(request.resource.data.orgId);
+      allow update: if canWrite(resource.data.orgId) && sameOrg(resource.data.orgId);
+      allow delete: if canDelete(resource.data.orgId);
+    }
+
+    match /tasks/{docId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId) && sameOrg(request.resource.data.orgId);
+      allow update: if canWrite(resource.data.orgId) && sameOrg(resource.data.orgId);
+      allow delete: if canDelete(resource.data.orgId);
+    }
+
+    // ----- Activity timeline -----
+    // Append-only history: members write their own entries and nobody edits them
+    // afterwards. Only admins and owners may prune the log.
+    match /activities/{docId} {
+      allow read: if canRead(resource.data.orgId);
+      allow create: if canWrite(request.resource.data.orgId)
+        && sameOrg(request.resource.data.orgId)
+        && request.resource.data.actorId == request.auth.uid;
+      allow update: if false;
+      allow delete: if canManageTeam(resource.data.orgId);
+    }
+
+    // Anything not matched above is denied.
+  }
+}
